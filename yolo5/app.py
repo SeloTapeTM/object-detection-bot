@@ -7,6 +7,7 @@ import yaml
 from loguru import logger
 import os
 import boto3
+import time
 from pymongo import MongoClient
 
 images_bucket = os.environ['BUCKET_NAME']
@@ -33,11 +34,12 @@ def predict():
 
     # TODO download img_name from S3, store the local image path in original_img_path
     #  The bucket name should be provided as an env var BUCKET_NAME.
-    local_dir = './photos/'
-    original_img_path = s3.download_file(images_bucket, img_name, local_dir + img_name.split('/')[-1])
+    local_dir = '/usr/src/app/photos/'
+    os.makedirs(local_dir, exist_ok=True)
+    original_img_path = local_dir + img_name.split('/')[-1]
+    s3.download_file(images_bucket, img_name, original_img_path)
 
     logger.info(f'prediction: {prediction_id}/{original_img_path}. Download img completed')
-
     # Predicts the objects in the image
     run(
         weights='yolov5s.pt',

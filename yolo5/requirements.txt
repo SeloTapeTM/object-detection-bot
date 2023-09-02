@@ -6,3 +6,5 @@ loguru
 
 pylint
 pytest
+boto3
+pymongo
