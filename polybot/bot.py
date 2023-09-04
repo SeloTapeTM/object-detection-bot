@@ -260,7 +260,7 @@ class ObjectDetectionBot(Bot):
         self.s3_client = boto3.client('s3')
 
     def yolo5_request(self, photo_path):
-        yolo5_api_url = "http://localhost:8081/predict"
+        yolo5_api_url = "http://localhost:8081/predict"  # "http://3.70.172.67:8081/predict"
         response = requests.post(f"{yolo5_api_url}?imgName={photo_path}")
         return response.json()
 
@@ -274,7 +274,7 @@ class ObjectDetectionBot(Bot):
             self.s3_client.upload_file(photo_path, bucket, img_name)  # TODO upload the photo to S3
             response = self.yolo5_request(img_name)  # TODO send a request to the `yolo5` service for prediction
             self.send_text(msg['chat']['id'], response)
-            # self.send_text(msg['chat']['id'], "test")
+            # self.send_text(msg['chat']['id'], "failed")
 
             # self.send_photo(msg['chat']['id'],photo_path, "done")
 

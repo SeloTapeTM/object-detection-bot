@@ -34,12 +34,15 @@ def predict():
 
     # TODO download img_name from S3, store the local image path in original_img_path
     #  The bucket name should be provided as an env var BUCKET_NAME.
-    local_dir = '/usr/src/app/photos/'
+    local_dir = 'photos/'
     os.makedirs(local_dir, exist_ok=True)
     original_img_path = local_dir + img_name.split('/')[-1]
     s3.download_file(images_bucket, img_name, original_img_path)
 
-    logger.info(f'prediction: {prediction_id}/{original_img_path}. Download img completed')
+    logger.info(f'prediction id: {prediction_id}, path: \"{original_img_path}\" Download img completed')
+    print(os.listdir("photos/"))
+    # time.sleep(5)
+
     # Predicts the objects in the image
     run(
         weights='yolov5s.pt',
@@ -50,7 +53,7 @@ def predict():
         save_txt=True
     )
 
-    logger.info(f'prediction: {prediction_id}/{original_img_path}. done')
+    logger.info(f'prediction: {prediction_id}, path: {original_img_path}. done')
 
     # This is the path for the predicted image with labels The predicted image typically includes bounding boxes
     # drawn around the detected objects, along with class labels and possibly confidence scores.
