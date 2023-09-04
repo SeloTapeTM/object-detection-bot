@@ -34,14 +34,13 @@ def predict():
 
     # TODO download img_name from S3, store the local image path in original_img_path
     #  The bucket name should be provided as an env var BUCKET_NAME.
-    local_dir = 'photos/'
-    os.makedirs(local_dir, exist_ok=True)
-    original_img_path = local_dir + img_name.split('/')[-1]
-    s3.download_file(images_bucket, img_name, original_img_path)
+    filename = img_name.split('/')[-1]  # Get the filename alone as srt
+    local_dir = 'photos/'  # str of dir to save to
+    os.makedirs(local_dir, exist_ok=True)  # make sure the dir exists
+    original_img_path = local_dir + filename  # assign the full path of the file to download
+    s3.download_file(images_bucket, img_name, original_img_path)  # download the file
 
     logger.info(f'prediction id: {prediction_id}, path: \"{original_img_path}\" Download img completed')
-    print(os.listdir("photos/"))
-    # time.sleep(5)
 
     # Predicts the objects in the image
     run(
@@ -57,14 +56,16 @@ def predict():
 
     # This is the path for the predicted image with labels The predicted image typically includes bounding boxes
     # drawn around the detected objects, along with class labels and possibly confidence scores.
-    predicted_img_path = Path(f'static/data/{prediction_id}/{original_img_path}')
-
+    predicted_img_path = Path(f'static/data/{prediction_id}/{filename}')  # get the result path
     # TODO Uploads the predicted image (predicted_img_path) to S3 (be careful not to override the original image).
-    filename = img_name.split('/')[-1]
-    predicted_img_name = f'predicted_{filename}'
-
-    path_with_predicted_filename = '/'.join(img_name.split('/')[:-1]) + predicted_img_name
-    s3.upload_file(predicted_img_path, images_bucket, path_with_predicted_filename)
+    predicted_img_name = f'predicted_{filename}'  # assign the new name
+    os.rename(f'/usr/src/app/static/data/{prediction_id}/{filename}',
+              f'/usr/src/app/static/data/{prediction_id}/{predicted_img_name}')  # rename the file before upload
+    s3_path_to_upload_to = '/'.join(img_name.split('/')[:-1]) + f'/{predicted_img_name}'  # assign the path on s3 as str
+    file_to_upload = f'/usr/src/app/static/data/{prediction_id}/{predicted_img_name}'  # assign the path locally as str
+    s3.upload_file(file_to_upload, images_bucket, s3_path_to_upload_to)  # upload the file to same path with new name s3
+    os.rename(f'/usr/src/app/static/data/{prediction_id}/{predicted_img_name}',
+              f'/usr/src/app/static/data/{prediction_id}/{filename}')  # rename the file back after upload
 
     # Parse prediction labels and create a summary
     pred_summary_path = Path(f'static/data/{prediction_id}/labels/{original_img_path.split(".")[0]}.txt')

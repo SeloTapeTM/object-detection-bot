@@ -259,9 +259,9 @@ class ObjectDetectionBot(Bot):
         super().__init__(token, telegram_chat_url)
         self.s3_client = boto3.client('s3')
 
-    def yolo5_request(self, photo_path):
+    def yolo5_request(self, s3_photo_path):
         yolo5_api_url = "http://localhost:8081/predict"  # "http://3.70.172.67:8081/predict"
-        response = requests.post(f"{yolo5_api_url}?imgName={photo_path}")
+        response = requests.post(f"{yolo5_api_url}?imgName={s3_photo_path}")
         return response.json()
 
     def handle_message(self, msg):
