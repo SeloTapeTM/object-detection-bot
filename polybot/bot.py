@@ -273,7 +273,14 @@ class ObjectDetectionBot(Bot):
             img_name = f'tg-photos/{photo_path}'
             self.s3_client.upload_file(photo_path, bucket, img_name)  # TODO upload the photo to S3
             response = self.yolo5_request(img_name)  # TODO send a request to the `yolo5` service for prediction
-            self.send_text(msg['chat']['id'], response)
+            filename = photo_path.split('/')[-1]
+            pred_img_name = f'predicted_{filename}'
+            s3_pred_path = '/'.join(img_name.split('/')[:-1]) + f'/{pred_img_name}'
+            local_path = 'photos/pred/'
+            os.makedirs(local_path, exist_ok=True)
+            self.s3_client.download_file(bucket, s3_pred_path, local_path)  # download the file
+            self.send_photo(msg['chat']['id'], (local_path + pred_img_name), "done")
+            # self.send_text(msg['chat']['id'], response)
             # self.send_text(msg['chat']['id'], "failed")
 
             # self.send_photo(msg['chat']['id'],photo_path, "done")

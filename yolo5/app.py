@@ -68,7 +68,9 @@ def predict():
               f'/usr/src/app/static/data/{prediction_id}/{filename}')  # rename the file back after upload
 
     # Parse prediction labels and create a summary
-    pred_summary_path = Path(f'static/data/{prediction_id}/labels/{original_img_path.split(".")[0]}.txt')
+    filename_no_ext = filename.split('.')[0]
+    pred_summary_path = Path(f'static/data/{prediction_id}/labels/{filename_no_ext}.txt')
+    logger.info(f'prediction: {prediction_id}, sum path: static/data/{prediction_id}/labels/{filename_no_ext}.txt. done')
     if pred_summary_path.exists():
         with open(pred_summary_path) as f:
             labels = f.read().splitlines()
