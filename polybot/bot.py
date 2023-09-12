@@ -259,6 +259,28 @@ class ObjectDetectionBot(Bot):
         super().__init__(token, telegram_chat_url)
         self.s3_client = boto3.client('s3')
 
+    def upload_file(self, file_name, bucket, object_name=None):
+        """Upload a file to an S3 bucket
+
+        :param file_name: File to upload
+        :param bucket: Bucket to upload to
+        :param object_name: S3 object name. If not specified then file_name is used
+        :return: True if file was uploaded, else False
+        """
+
+        # If S3 object_name was not specified, use file_name
+        if object_name is None:
+            object_name = os.path.basename(file_name)
+
+        # Upload the file
+        s3_client = boto3.client('s3')
+        try:
+            response = s3_client.upload_file(file_name, bucket, object_name)
+        except ClientError as e:
+            logging.error(e)
+            return False
+        return True
+
     def yolo5_request(self, s3_photo_path):
         yolo5_api_url = "http://localhost:8081/predict"  # "http://3.70.172.67:8081/predict"
         response = requests.post(f"{yolo5_api_url}?imgName={s3_photo_path}")
@@ -271,22 +293,21 @@ class ObjectDetectionBot(Bot):
             photo_path = self.download_user_photo(msg)
             bucket = "omers3bucketpublic"
             img_name = f'tg-photos/{photo_path}'
-            self.s3_client.upload_file(photo_path, bucket, img_name)  # TODO upload the photo to S3
-            response = self.yolo5_request(img_name)  # TODO send a request to the `yolo5` service for prediction
-            filename = photo_path.split('/')[-1]
-            pred_img_name = f'predicted_{filename}'
-            s3_pred_path = '/'.join(img_name.split('/')[:-1]) + f'/{pred_img_name}'
-            local_path = 'photos/pred/'
-            os.makedirs(local_path, exist_ok=True)
-            self.s3_client.download_file(bucket, s3_pred_path, local_path)  # download the file
-            self.send_photo(msg['chat']['id'], (local_path + pred_img_name), "done")
+            upload_response = self.upload_file(photo_path, bucket, img_name)  # upload the photo to S3
+            if not upload_response:
+                raise ClientError
+            else:
+                logger.info(f'Successfully uploaded {photo_path} to {bucket}/{img_name}')
+            try:
+                json_response = self.yolo5_request(img_name)  # send a request to the `yolo5` service for prediction
+                self.send_text(msg['chat']['id'], f'prediction result: {json_response}')
+            except TypeError as te:
+                logger.error(f'An error occurred: {te}')
+                self.send_text(msg['chat']['id'], 'An error occurred while processing your request.')
             # self.send_text(msg['chat']['id'], response)
             # self.send_text(msg['chat']['id'], "failed")
 
             # self.send_photo(msg['chat']['id'],photo_path, "done")
-
-
-
 
         # TODO send results to the Telegram end-user4
 

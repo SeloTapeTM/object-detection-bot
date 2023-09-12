@@ -1,16 +1,26 @@
 import time
 from pathlib import Path
-from flask import Flask, request
+from flask import Flask, request, jsonify
 from detect import run
 import uuid
 import yaml
 from loguru import logger
 import os
 import boto3
-import time
-from pymongo import MongoClient
+import logging
+from botocore.exceptions import ClientError
+import pymongo
 
+# define bucket name
 images_bucket = os.environ['BUCKET_NAME']
+
+# mongoDB stuff
+database_name = "mydb"
+collection_name = "predictions"
+mongodb_uri = f'mongodb://mongo1:27017,mongo2:27018,mongo3:27019/{database_name}?replicaSet=myReplicaSet'
+client = pymongo.MongoClient(mongodb_uri)
+db = client[database_name]
+collection = db[collection_name]
 
 with open("data/coco128.yaml", "r") as stream:
     names = yaml.safe_load(stream)['names']
@@ -19,6 +29,29 @@ with open("data/coco128.yaml", "r") as stream:
 s3 = boto3.client('s3')
 
 app = Flask(__name__)
+
+
+def upload_file(file_name, bucket, object_name=None):
+    """Upload a file to an S3 bucket
+
+    :param file_name: File to upload
+    :param bucket: Bucket to upload to
+    :param object_name: S3 object name. If not specified then file_name is used
+    :return: True if file was uploaded, else False
+    """
+
+    # If S3 object_name was not specified, use file_name
+    if object_name is None:
+        object_name = os.path.basename(file_name)
+
+    # Upload the file
+    s3_client = boto3.client('s3')
+    try:
+        response = s3_client.upload_file(file_name, bucket, object_name)
+    except ClientError as e:
+        logging.error(e)
+        return False
+    return True
 
 
 @app.route('/predict', methods=['POST'])
@@ -56,14 +89,16 @@ def predict():
 
     # This is the path for the predicted image with labels The predicted image typically includes bounding boxes
     # drawn around the detected objects, along with class labels and possibly confidence scores.
-    predicted_img_path = Path(f'static/data/{prediction_id}/{filename}')  # get the result path
+    predicted_img_path = f'static/data/{prediction_id}/{filename}'  # predicted_img_path = Path(f'static/data/{prediction_id}/{filename}')  # get the result path
     # TODO Uploads the predicted image (predicted_img_path) to S3 (be careful not to override the original image).
     predicted_img_name = f'predicted_{filename}'  # assign the new name
     os.rename(f'/usr/src/app/static/data/{prediction_id}/{filename}',
               f'/usr/src/app/static/data/{prediction_id}/{predicted_img_name}')  # rename the file before upload
     s3_path_to_upload_to = '/'.join(img_name.split('/')[:-1]) + f'/{predicted_img_name}'  # assign the path on s3 as str
     file_to_upload = f'/usr/src/app/static/data/{prediction_id}/{predicted_img_name}'  # assign the path locally as str
-    s3.upload_file(file_to_upload, images_bucket, s3_path_to_upload_to)  # upload the file to same path with new name s3
+    upload_response = upload_file(file_to_upload, images_bucket, s3_path_to_upload_to)  # upload the file to same path with new name s3
+    if not upload_response:
+        raise ClientError
     os.rename(f'/usr/src/app/static/data/{prediction_id}/{predicted_img_name}',
               f'/usr/src/app/static/data/{prediction_id}/{filename}')  # rename the file back after upload
 
@@ -93,8 +128,11 @@ def predict():
             'time': time.time()
         }
 
-        # TODO store the prediction_summary in MongoDB
-
+        logger.info(f'prediction: {prediction_id}/{original_img_path}. created prediction summery')
+        insert_id = collection.insert_one(prediction_summary)  # TODO store the prediction_summary in MongoDB
+        logger.info(f'prediction: {prediction_id}/{original_img_path}. written to mongodb cluster. ID:{insert_id}')
+        prediction_summary.pop('_id')
+        logger.info(f'prediction: {prediction_id}/{original_img_path}. current pred_sum: {prediction_summary}')
         return prediction_summary
     else:
         return f'prediction: {prediction_id}/{original_img_path}. prediction result not found', 404
