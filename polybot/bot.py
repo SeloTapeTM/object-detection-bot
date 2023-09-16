@@ -8,6 +8,54 @@ import logging
 import boto3
 from botocore.exceptions import ClientError
 import requests
+import requests.exceptions
+
+
+# Static Helper Methods
+def upload_file(file_name, bucket, object_name=None):
+    """Upload a file to an S3 bucket
+
+    :param file_name: File to upload
+    :param bucket: Bucket to upload to
+    :param object_name: S3 object name. If not specified then file_name is used
+    :return: True if file was uploaded, else False
+    """
+
+    # If S3 object_name was not specified, use file_name
+    if object_name is None:
+        object_name = os.path.basename(file_name)
+
+    # Upload the file
+    s3_client = boto3.client('s3')
+    try:
+        response = s3_client.upload_file(file_name, bucket, object_name)
+    except ClientError as e:
+        logging.error(e)
+        return False
+    return True
+
+
+def count_prediction_msg(json_summery):
+    labels = json_summery['labels']  # gets the list of all the labels from the json
+    counted_dict = {}  # empty dict to store the counted results
+    for item in labels:
+        counted_dict[item['class']] = counted_dict.get(item['class'], 0) + 1
+    formatted_message = ''
+    for key, value in counted_dict.items():
+        formatted_key = key.capitalize()
+        formatted_message += f'{formatted_key}: {value}\n'
+    return formatted_message
+
+
+def yolo5_request(s3_photo_path):
+    yolo5_api_url = "http://localhost:8081/predict"  # "http://3.70.172.67:8081/predict"
+    try:
+        response = requests.post(f"{yolo5_api_url}?imgName={s3_photo_path}")
+        response.raise_for_status()
+        return response, response.json()
+    except requests.exceptions.HTTPError as e:
+        logger.info(f'Error: {e}')
+        return None, None
 
 
 class Bot:
@@ -84,6 +132,7 @@ class ImageProcessingBot(Bot):
         super().__init__(token, telegram_chat_url)
         self.processing_completed = True
         self.enjoy_msg = 'Enjoy!'
+        self.s3_client = boto3.client('s3')
 
     def handle_message(self, msg):
         if not self.processing_completed:
@@ -106,6 +155,9 @@ class ImageProcessingBot(Bot):
                 elif "segment" in caption.lower() or "חלוקה" in caption.lower():
                     logger.info("Received photo with segment caption.")
                     self.process_image_segment(msg)
+                elif "detect" in caption.lower() or "זיהוי" in caption.lower():
+                    logger.info("Received photo with detect caption.")
+                    self.detect_objects_in_img(msg)
                 else:
                     logger.info("Received photo with wrong caption.")
                     response = (f'Oh no!\nThe filter that you\'ve specified does not exist yet.\n Please send it again '
@@ -124,20 +176,21 @@ class ImageProcessingBot(Bot):
             if '/start' in message:
                 logger.info("Received text with command /start.")
                 response = (f'Oh, Hi there!\nWelcome to Omer\'s Image Processing Bot!\n\nFor information on how to use '
-                            f'the bot type \"/help\".\nFor the list of filters type \"/filters\".')
+                            f'the bot type \"/help\".\nFor the list of actions type \"/actions\".')
                 self.send_text(msg['chat']['id'], response)
             elif '/help' in message:
                 logger.info("Received text with command /help.")
                 response = (f'In order to use the bot properly you should send any photo, and in the \"caption'
-                            f'\" type in the name of the filter you want to apply.\n\nFor the list of filters available'
-                            f' right now you can type \"/filters\".')
+                            f'\" type in the name of the action you want to apply.\n\nFor the list of actions available'
+                            f' right now you can type \"/actions\".')
                 self.send_text(msg['chat']['id'], response)
-            elif '/filters' in message:
+            elif '/actions' in message:
                 logger.info("Received text with command /filters.")
-                response = (f'The list of filters is:\n\nBlur - Blurs the image.\nContour - Shows only outlines.\n'
-                            f'Salt n Pepper - Randomly place white and black pixels over the picture.\nSegment -'
-                            f' Makes all the bright parts white and all the dark parts black.\n\nFor information on how'
-                            f' to use the filters you can type \"/help\".')
+                response = (f'The list of actions\\filters is:\n\nBlur - Blurs the image.\nContour - Shows only outline'
+                            f's.\nSalt n Pepper - Randomly place white and black pixels over the picture.\nSegment -'
+                            f' Makes all the bright parts white and all the dark parts black.\n\nNEW!!!\nDetect - detec'
+                            f'ts objects in the given photo and prints what\'s detected. \n\nFor information on how'
+                            f' to use the actions you can type \"/help\".')
                 self.send_text(msg['chat']['id'], response)
             elif 'i hate you' in message:
                 logger.info("Received text that says \"i hate you\".")
@@ -253,38 +306,36 @@ class ImageProcessingBot(Bot):
 
         self.processing_completed = True
 
+    def detect_objects_in_img(self, msg):
+        self.processing_completed = False
+        self.send_text(msg['chat']['id'], text=f'Processing...')
+
+        photo_path = self.download_user_photo(msg)
+        bucket = "omers3bucketpublic"
+        img_name = f'tg-photos/{photo_path}'
+        upload_response = upload_file(photo_path, bucket, img_name)  # upload the photo to S3
+        if not upload_response:
+            raise ClientError
+        else:
+            logger.info(f'Successfully uploaded {photo_path} to {bucket}/{img_name}')
+        logger.info(f'before request')
+        response_code, json_response = yolo5_request(img_name)  # send a request to the `yolo5` service for prediction
+        logger.info(f'after request')
+        if response_code is None:
+            self.send_text(msg['chat']['id'], 'Completed!')
+            self.send_text(msg['chat']['id'], 'No detections found with your img.')
+        else:
+            self.send_text(msg['chat']['id'], 'Completed!')
+            counted_response_msg = count_prediction_msg(json_response)
+            self.send_text(msg['chat']['id'], f'Detected objects: \n{counted_response_msg}')
+
+        self.processing_completed = True
+
 
 class ObjectDetectionBot(Bot):
     def __init__(self, token, telegram_chat_url):
         super().__init__(token, telegram_chat_url)
         self.s3_client = boto3.client('s3')
-
-    def upload_file(self, file_name, bucket, object_name=None):
-        """Upload a file to an S3 bucket
-
-        :param file_name: File to upload
-        :param bucket: Bucket to upload to
-        :param object_name: S3 object name. If not specified then file_name is used
-        :return: True if file was uploaded, else False
-        """
-
-        # If S3 object_name was not specified, use file_name
-        if object_name is None:
-            object_name = os.path.basename(file_name)
-
-        # Upload the file
-        s3_client = boto3.client('s3')
-        try:
-            response = s3_client.upload_file(file_name, bucket, object_name)
-        except ClientError as e:
-            logging.error(e)
-            return False
-        return True
-
-    def yolo5_request(self, s3_photo_path):
-        yolo5_api_url = "http://localhost:8081/predict"  # "http://3.70.172.67:8081/predict"
-        response = requests.post(f"{yolo5_api_url}?imgName={s3_photo_path}")
-        return response.json()
 
     def handle_message(self, msg):
         logger.info(f'Incoming message: {msg}')
@@ -293,61 +344,57 @@ class ObjectDetectionBot(Bot):
             photo_path = self.download_user_photo(msg)
             bucket = "omers3bucketpublic"
             img_name = f'tg-photos/{photo_path}'
-            upload_response = self.upload_file(photo_path, bucket, img_name)  # upload the photo to S3
+            upload_response = upload_file(photo_path, bucket, img_name)  # upload the photo to S3
             if not upload_response:
                 raise ClientError
             else:
                 logger.info(f'Successfully uploaded {photo_path} to {bucket}/{img_name}')
-            try:
-                json_response = self.yolo5_request(img_name)  # send a request to the `yolo5` service for prediction
-                self.send_text(msg['chat']['id'], f'prediction result: {json_response}')
-            except TypeError as te:
-                logger.error(f'An error occurred: {te}')
-                self.send_text(msg['chat']['id'], 'An error occurred while processing your request.')
-            # self.send_text(msg['chat']['id'], response)
-            # self.send_text(msg['chat']['id'], "failed")
-
-            # self.send_photo(msg['chat']['id'],photo_path, "done")
-
-        # TODO send results to the Telegram end-user4
+            logger.info(f'before request')
+            response_code, json_response = yolo5_request(img_name)  # send a request to the `yolo5` service for prediction
+            logger.info(f'after request')
+            if response_code is None:
+                self.send_text(msg['chat']['id'], 'No detections found with your img.')
+            else:
+                counted_response_msg = count_prediction_msg(json_response)
+                self.send_text(msg['chat']['id'], f'Detected objects: \n{counted_response_msg}')
 
         elif "text" in msg:
             message = msg['text'].lower()
             if '/start' in message:
                 logger.info("Received text with command /start.")
-                response = (f'Oh, Hi there!\nWelcome to Omer\'s Image Processing Bot!\n\nFor information on how to use '
-                            f'the bot type \"/help\".\nFor the list of filters type \"/filters\".')
-                self.send_text(msg['chat']['id'], response)
+                response_code = (f'Oh, Hi there!\nWelcome to Omer\'s Image Processing Bot!\n\nFor information on how to'
+                                 f' use the bot type \"/help\".\nFor the list of actions type \"/actions\".')
+                self.send_text(msg['chat']['id'], response_code)
             elif '/help' in message:
                 logger.info("Received text with command /help.")
-                response = (f'In order to use the bot properly you should send any photo, and in the \"caption'
+                response_code = (f'In order to use the bot properly you should send any photo, and in the \"caption'
                             f'\" type in the name of the filter you want to apply.\n\nFor the list of filters available'
                             f' right now you can type \"/filters\".')
-                self.send_text(msg['chat']['id'], response)
+                self.send_text(msg['chat']['id'], response_code)
             elif '/filters' in message:
                 logger.info("Received text with command /filters.")
-                response = (f'The list of filters is:\n\nBlur - Blurs the image.\nContour - Shows only outlines.\n'
+                response_code = (f'The list of filters is:\n\nBlur - Blurs the image.\nContour - Shows only outlines.\n'
                             f'Salt n Pepper - Randomly place white and black pixels over the picture.\nSegment -'
                             f' Makes all the bright parts white and all the dark parts black.\n\nFor information on how'
                             f' to use the filters you can type \"/help\".')
-                self.send_text(msg['chat']['id'], response)
+                self.send_text(msg['chat']['id'], response_code)
             elif 'i hate you' in message:
                 logger.info("Received text that says \"i hate you\".")
-                response = f'You\'ve insulted me! And that is not nice at all.. You should be ashamed of yourself.'
-                self.send_text(msg['chat']['id'], response)
+                response_code = f'You\'ve insulted me! And that is not nice at all.. You should be ashamed of yourself.'
+                self.send_text(msg['chat']['id'], response_code)
             elif 'i love you' in message:
                 logger.info("Received text that says \"i love you\".")
-                response = f'Awwww, I love you too! <3 XOXO'
-                self.send_text(msg['chat']['id'], response)
+                response_code = f'Awwww, I love you too! <3 XOXO'
+                self.send_text(msg['chat']['id'], response_code)
             elif 'supercalifragilisticexpialidocious' in message:
                 logger.info("Received easteregg.")
-                response = f'https://boulderbugle.com/super-secret-easter-egg-39tz7pni'
-                self.send_text(msg['chat']['id'], response)
+                response_code = f'https://boulderbugle.com/super-secret-easter-egg-39tz7pni'
+                self.send_text(msg['chat']['id'], response_code)
             elif 'supercalifragilisticexpialodocious' in message:
                 logger.info("Received easteregg.")
-                response = f'https://boulderbugle.com/super-secret-easter-egg-39tz7pni'
-                self.send_text(msg['chat']['id'], response)
+                response_code = f'https://boulderbugle.com/super-secret-easter-egg-39tz7pni'
+                self.send_text(msg['chat']['id'], response_code)
             else:
-                response = (f'What you\'ve typed (\"{msg["text"]}\") is not a recognisable command.\n\nTry typing '
+                response_code = (f'What you\'ve typed (\"{msg["text"]}\") is not a recognisable command.\n\nTry typing '
                             f'\"/help\"')
-                self.send_text(msg['chat']['id'], response)
+                self.send_text(msg['chat']['id'], response_code)
