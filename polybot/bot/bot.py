@@ -47,20 +47,9 @@ def count_prediction_msg(json_summery):
     return formatted_message
 
 
-def yolo5_request(s3_photo_path):
-    yolo5_api_url = "http://localhost:8081/predict"  # "http://3.70.172.67:8081/predict"
-    try:
-        response = requests.post(f"{yolo5_api_url}?imgName={s3_photo_path}")
-        response.raise_for_status()
-        return response, response.json()
-    except requests.exceptions.HTTPError as e:
-        logger.info(f'Error: {e}')
-        return None, None
-
-
 class Bot:
 
-    def __init__(self, token, telegram_chat_url):
+    def __init__(self, token, telegram_chat_url, bucket_name, yolo5_cont_name):
         # create a new instance of the TeleBot class.
         # all communication with Telegram servers are done using self.telegram_bot_client
         self.telegram_bot_client = telebot.TeleBot(token)
@@ -72,7 +61,11 @@ class Bot:
         # set the webhook URL
         self.telegram_bot_client.set_webhook(url=f'{telegram_chat_url}/{token}/', timeout=60)
 
-        logger.info(f'Telegram Bot information\n\n{self.telegram_bot_client.get_me()}')
+        self.bucket_name = bucket_name
+        self.yolo5_cont_name = yolo5_cont_name
+
+        logger.info(f'Telegram Bot information\n\n{self.telegram_bot_client.get_me()}\n\n')
+        logger.info(f'******{self.bucket_name}******\n******{self.yolo5_cont_name}******')
 
     def send_text(self, chat_id, text):
         self.telegram_bot_client.send_message(chat_id, text)
@@ -128,8 +121,8 @@ class QuoteBot(Bot):
 
 
 class ImageProcessingBot(Bot):
-    def __init__(self, token, telegram_chat_url):
-        super().__init__(token, telegram_chat_url)
+    def __init__(self, token, telegram_chat_url, bucket_name, yolo5_cont_name):
+        super().__init__(token, telegram_chat_url, bucket_name, yolo5_cont_name)
         self.processing_completed = True
         self.enjoy_msg = 'Enjoy!'
         self.s3_client = boto3.client('s3')
@@ -149,7 +142,8 @@ class ImageProcessingBot(Bot):
                 elif "contour" in caption.lower() or "קווי מתאר" in caption.lower():
                     logger.info("Received photo with contour caption.")
                     self.process_image_contur(msg)
-                elif "salt n pepper" in caption.lower() or "salt and pepper" in caption.lower() or "מלח פלפל" in caption.lower():
+                elif ("salt n pepper" in caption.lower() or "salt and pepper" in caption.lower()
+                      or "מלח פלפל" in caption.lower()):
                     logger.info("Received photo with salt n pepper caption.")
                     self.process_image_salt_n_pepper(msg)
                 elif "segment" in caption.lower() or "חלוקה" in caption.lower():
@@ -306,12 +300,22 @@ class ImageProcessingBot(Bot):
 
         self.processing_completed = True
 
+    def yolo5_request(self, s3_photo_path):
+        yolo5_cont_name = self.yolo5_cont_name
+        yolo5_api_url = f'http://{yolo5_cont_name}:8081/predict'  # yolo5_api_url = f'http://localhost:8081/predict'
+        try:
+            response = requests.post(f"{yolo5_api_url}?imgName={s3_photo_path}")
+            response.raise_for_status()
+            return response, response.json()
+        except requests.exceptions.HTTPError as e:
+            logger.info(f'Error: {e}')
+            return None, None
+
     def detect_objects_in_img(self, msg):
         self.processing_completed = False
         self.send_text(msg['chat']['id'], text=f'Processing...')
-
         photo_path = self.download_user_photo(msg)
-        bucket = "omers3bucketpublic"
+        bucket = self.bucket_name
         img_name = f'tg-photos/{photo_path}'
         upload_response = upload_file(photo_path, bucket, img_name)  # upload the photo to S3
         if not upload_response:
@@ -319,7 +323,7 @@ class ImageProcessingBot(Bot):
         else:
             logger.info(f'Successfully uploaded {photo_path} to {bucket}/{img_name}')
         logger.info(f'before request')
-        response_code, json_response = yolo5_request(img_name)  # send a request to the `yolo5` service for prediction
+        response_code, json_response = self.yolo5_request(img_name)  # send a request to the `yolo5` service for prediction
         logger.info(f'after request')
         if response_code is None:
             self.send_text(msg['chat']['id'], 'Completed!')
@@ -368,15 +372,15 @@ class ObjectDetectionBot(Bot):
             elif '/help' in message:
                 logger.info("Received text with command /help.")
                 response_code = (f'In order to use the bot properly you should send any photo, and in the \"caption'
-                            f'\" type in the name of the filter you want to apply.\n\nFor the list of filters available'
-                            f' right now you can type \"/filters\".')
+                                 f'\" type in the name of the filter you want to apply.\n\nFor the list of filters available'
+                                 f' right now you can type \"/filters\".')
                 self.send_text(msg['chat']['id'], response_code)
             elif '/filters' in message:
                 logger.info("Received text with command /filters.")
                 response_code = (f'The list of filters is:\n\nBlur - Blurs the image.\nContour - Shows only outlines.\n'
-                            f'Salt n Pepper - Randomly place white and black pixels over the picture.\nSegment -'
-                            f' Makes all the bright parts white and all the dark parts black.\n\nFor information on how'
-                            f' to use the filters you can type \"/help\".')
+                                 f'Salt n Pepper - Randomly place white and black pixels over the picture.\nSegment -'
+                                 f' Makes all the bright parts white and all the dark parts black.\n\nFor information on how'
+                                 f' to use the filters you can type \"/help\".')
                 self.send_text(msg['chat']['id'], response_code)
             elif 'i hate you' in message:
                 logger.info("Received text that says \"i hate you\".")
@@ -396,5 +400,5 @@ class ObjectDetectionBot(Bot):
                 self.send_text(msg['chat']['id'], response_code)
             else:
                 response_code = (f'What you\'ve typed (\"{msg["text"]}\") is not a recognisable command.\n\nTry typing '
-                            f'\"/help\"')
+                                 f'\"/help\"')
                 self.send_text(msg['chat']['id'], response_code)

@@ -12,7 +12,9 @@ from botocore.exceptions import ClientError
 import pymongo
 
 # define bucket name
-images_bucket = os.environ['BUCKET_NAME']
+BUCKET_NAME_FILE = os.environ['BUCKET_NAME_FILE']  # images_bucket = os.environ['BUCKET_NAME']
+with open(BUCKET_NAME_FILE, 'r') as file:
+    images_bucket = file.read().rstrip()
 
 # mongoDB stuff
 database_name = "mydb"

@@ -1,0 +1,98 @@
+version: "3"
+services:
+  polybot:
+    image: 352708296901.dkr.ecr.eu-central-1.amazonaws.com/omerd-polybot:1.1.1
+    container_name: polybot-app
+    networks:
+      - mongoCluster
+    secrets:
+      - bucket_name
+      - telegram_bot_token
+      - telegram_bot_link
+    environment:
+      - BUCKET_NAME_FILE=/run/secrets/bucket_name
+      - TELEGRAM_TOKEN_FILE=/run/secrets/telegram_bot_token
+      - TELEGRAM_APP_URL_FILE=/run/secrets/telegram_bot_link
+      - YOLO5_CONT_NAME=yolo5-app
+    ports:
+      - "8443:8443"
+    depends_on:
+      - yolo5
+
+
+  yolo5:
+    image: 352708296901.dkr.ecr.eu-central-1.amazonaws.com/omerd-yolo5:1.1.1
+    container_name: yolo5-app
+    secrets:
+      - bucket_name
+    environment:
+      - BUCKET_NAME_FILE=/run/secrets/bucket_name
+    ports:
+      - "8081:8081"
+    networks:
+      - mongoCluster
+    depends_on:
+      mongo1:
+        condition: service_healthy
+
+
+  mongo1:
+    image: mongo:4.4
+    container_name: mongo1
+    command: ["mongod", "--replSet", "myReplicaSet", "--bind_ip", "localhost,mongo1"]
+    depends_on:
+      - mongo2
+      - mongo3
+    networks:
+      - mongoCluster
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo1vol:/data/db
+    healthcheck:
+      test: test $$(echo "rs.initiate({_id:'myReplicaSet',members:[{_id:0,host:\"mongo1\"},{_id:1,host:\"mongo2\"},{_id:2,host:\"mongo3\"}]}).ok || rs.status().ok" | mongo --quiet) -eq 1
+      interval: 10s
+      start_period: 30s
+
+
+  mongo2:
+    image: mongo:4.4
+    container_name: mongo2
+    command: ["mongod", "--replSet", "myReplicaSet", "--bind_ip", "localhost,mongo2"]
+    networks:
+      - mongoCluster
+    ports:
+      - "27018:27017"
+    volumes:
+      - mongo2vol:/data/db
+
+  mongo3:
+    image: mongo:4.4
+    container_name: mongo3
+    command: ["mongod", "--replSet", "myReplicaSet", "--bind_ip", "localhost,mongo3"]
+    networks:
+      - mongoCluster
+    ports:
+      - "27019:27017"
+    volumes:
+      - mongo3vol:/data/db
+
+networks:
+  mongoCluster:
+    driver: bridge
+
+volumes:
+  mongo1vol:
+    driver: local
+  mongo2vol:
+    driver: local
+  mongo3vol:
+    driver: local
+
+secrets:
+  bucket_name:
+    file: ./bucket_name.secret
+  telegram_bot_token:
+    file: ./telegram_bot_token.secret
+  telegram_bot_link:
+    file: ./telegram_bot_link.secret
