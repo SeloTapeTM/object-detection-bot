@@ -1,4 +1,4 @@
-version: "3"
+version:  "3" # "3.4"
 services:
   polybot:
     image: 352708296901.dkr.ecr.eu-central-1.amazonaws.com/omerd-polybot:1.1.1
@@ -21,7 +21,7 @@ services:
 
 
   yolo5:
-    image: 352708296901.dkr.ecr.eu-central-1.amazonaws.com/omerd-yolo5:1.1.1
+    image: 352708296901.dkr.ecr.eu-central-1.amazonaws.com/omerd-yolo5:1.2.0
     container_name: yolo5-app
     secrets:
       - bucket_name
